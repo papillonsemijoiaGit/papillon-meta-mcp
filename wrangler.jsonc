@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "papillon-meta",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  // KV namespaces are created automatically on the first deploy.
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV" },
+    { "binding": "META_KV" }
+  ],
+  // Photos and videos waiting to be published; Meta downloads them from /media/<key>.
+  "r2_buckets": [
+    { "binding": "MEDIA", "bucket_name": "papillon-meta-media" }
+  ],
+  // Publishes the Instagram posts that are due (the Instagram API has no native scheduling).
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true }
+}
