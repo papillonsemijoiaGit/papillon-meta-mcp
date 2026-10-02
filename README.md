@@ -37,7 +37,7 @@ A Meta baixa cada arquivo de um link público na hora de publicar. Imagens já n
 1. Cloudflare › R2: ative o R2 (até 10 GB é grátis). O bucket `papillon-meta-media` é criado no primeiro deploy; se o deploy reclamar do bucket, crie-o em R2 › Create bucket com esse nome.
 2. Workers & Pages › Create › Import a repository › este repositório. Nome do Worker `papillon-meta`, build command vazio, deploy command `npx wrangler deploy`.
 3. No Worker, Settings › Variables and Secrets, adicione como **Secret**: `META_APP_ID` e `META_APP_SECRET` (Configurações do app › Básico, no app da Meta). `META_WEBHOOK_TOKEN` fica para a segunda etapa.
-4. Cada push na branch principal publica de novo. Os dois KV são criados automaticamente no primeiro deploy, e o cron vem do `wrangler.jsonc`.
+4. Cada push na branch principal publica de novo. Os dois KV (`papillon-meta-oauth-kv` e `papillon-meta-meta-kv`) já existem e estão fixados pelo id no `wrangler.jsonc`, junto com o cron.
 
 No app da Meta (modo de desenvolvimento):
 - Casos de uso: "Gerenciar tudo na sua Página" e "Gerenciar mensagens e conteúdo no Instagram" (configuração da API com login do Facebook).

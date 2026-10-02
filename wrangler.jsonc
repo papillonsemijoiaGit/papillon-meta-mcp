@@ -5,10 +5,10 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": true,
-  // KV namespaces are created automatically on the first deploy.
+  // Created by the first deploy (2026-10-02); pinned so later deploys reuse them.
   "kv_namespaces": [
-    { "binding": "OAUTH_KV" },
-    { "binding": "META_KV" }
+    { "binding": "OAUTH_KV", "id": "be4af78a347149f1b07f0b515ac738a3" },
+    { "binding": "META_KV", "id": "8637e900f4304d0f95d4e5d9e612c067" }
   ],
   // Photos and videos waiting to be published; Meta downloads them from /media/<key>.
   "r2_buckets": [
