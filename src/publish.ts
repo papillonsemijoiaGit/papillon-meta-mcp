@@ -4,9 +4,26 @@ import { Graph, type Params } from "./graph";
 export type Rede = "instagram" | "facebook";
 export type Formato = "post" | "carrossel" | "reels" | "story";
 
+// Instagram product tag: x/y (0 to 1, from the top left) only on images; videos and Reels take no position.
+export interface Produto {
+  product_id: string;
+  x?: number;
+  y?: number;
+}
+
 export interface Midia {
   url: string;
   tipo: "imagem" | "video";
+  produtos?: Produto[];
+}
+
+export function productTags(m: Midia) {
+  if (!m.produtos?.length) return {};
+  return {
+    product_tags: m.produtos.map((p) =>
+      m.tipo === "imagem" ? { product_id: p.product_id, x: p.x ?? 0.5, y: p.y ?? 0.5 } : { product_id: p.product_id },
+    ),
+  };
 }
 
 export interface Publicacao {
@@ -45,6 +62,16 @@ export async function validate(env: Env, origin: string, pub: Publicacao): Promi
   if (pub.formato === "carrossel" && (n < 2 || n > 10)) throw new Error("Carrossel leva de 2 a 10 mídias.");
   if (pub.formato === "reels" && (n !== 1 || !videos)) throw new Error("Reels leva exatamente 1 vídeo.");
   if (pub.formato === "story" && n !== 1) throw new Error("Story leva exatamente 1 mídia.");
+  const marcados = pub.midias.filter((m) => m.produtos?.length);
+  if (marcados.length) {
+    if (pub.formato === "story") throw new Error("A API da Meta não marca produtos em Stories (não existe figurinha de produto pela API). Marque pelo app.");
+    if (pub.formato === "carrossel" && pub.midias.some((m) => m.tipo === "video" && m.produtos?.length)) {
+      throw new Error("No carrossel, só as fotos aceitam marcação de produto.");
+    }
+    if (marcados.some((m) => m.produtos!.length > 5)) throw new Error("Cada mídia aceita no máximo 5 produtos marcados.");
+    if (pub.midias.reduce((t, m) => t + (m.produtos?.length ?? 0), 0) > 20) throw new Error("O post aceita no máximo 20 produtos marcados no total.");
+    if (pub.redes.includes("facebook")) avisos.push("A marcação de produtos vale só para o Instagram; no Facebook o post sai sem marcação.");
+  }
   if (pub.redes.includes("facebook")) {
     if (pub.formato === "story") throw new Error("Stories no Facebook ainda não estão no conector (segunda etapa). Escolha só instagram.");
     if (pub.formato === "carrossel" && videos) throw new Error("No Facebook o post com várias mídias aceita só imagens.");
@@ -119,6 +146,7 @@ async function createContainer(g: Graph, ig: string, pub: Publicacao, filhos?: s
         : pub.formato === "story"
           ? { media_type: "STORIES", ...media }
           : { ...media, caption: pub.legenda, alt_text: pub.alt_text };
+  if (pub.formato === "post" || pub.formato === "reels") Object.assign(body, productTags(m));
   return (await g.call(`/${ig}/media`, { body })).id;
 }
 
@@ -137,7 +165,7 @@ export async function advance(g: Graph, job: JobInstagram, esperar: boolean, bud
         if (left() < job.pub.midias.length + 2) break;
         job.filhos = [];
         for (const m of job.pub.midias) {
-          const media = m.tipo === "video" ? { media_type: "VIDEO", video_url: m.url } : { image_url: m.url };
+          const media = m.tipo === "video" ? { media_type: "VIDEO", video_url: m.url } : { image_url: m.url, ...productTags(m) };
           job.filhos.push((await g.call(`/${ig_id}/media`, { body: { is_carousel_item: true, ...media } })).id);
         }
       }

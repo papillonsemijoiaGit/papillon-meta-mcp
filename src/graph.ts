@@ -17,6 +17,8 @@ export const SCOPES = [
   "instagram_manage_comments",
   "instagram_manage_insights",
   "instagram_manage_messages",
+  "instagram_shopping_tag_products",
+  "catalog_management",
   "business_management",
 ];
 
