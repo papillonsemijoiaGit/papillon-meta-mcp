@@ -47,6 +47,12 @@ function tool<S extends z.ZodObject>(
 
 const confirmacao = z.string().optional().describe("Só na segunda chamada: o confirmacao_id da prévia aprovada pelo Marcelo.");
 const rede = z.enum(["instagram", "facebook"]);
+const CATALOGO = "1517672345908008"; // Papillon Jóias Catálogo, synced daily from the Tray feed
+const produtos = z.array(z.object({
+  product_id: z.string().describe("ID do produto no catálogo da Meta (não é o id da Tray): use meta_produtos."),
+  x: z.number().min(0).max(1).optional().describe("Posição horizontal na foto, 0 a 1 a partir da esquerda (padrão 0,5). Ignorado em vídeo."),
+  y: z.number().min(0).max(1).optional().describe("Posição vertical na foto, 0 a 1 a partir do topo (padrão 0,5). Ignorado em vídeo."),
+})).min(1).max(5);
 const unix = (d: Date) => Math.floor(d.getTime() / 1000);
 
 const IG_CONTA = ["reach", "views", "accounts_engaged", "total_interactions", "profile_links_taps"];
@@ -138,7 +144,11 @@ export function buildServer(env: Env) {
     "Publica ou agenda foto, carrossel (2 a 10), Reels ou Story no Instagram, no Facebook ou nos dois. Sem horario publica na confirmação. Facebook: agendamento nativo de 10 minutos a 30 dias. Instagram: entra na fila do conector e sai no horário (conferência a cada 5 minutos). Primeira chamada valida as mídias e devolve a prévia; a segunda, só com confirmacao_id, publica ou agenda.",
     z.object({
       formato: z.enum(["post", "carrossel", "reels", "story"]).optional(),
-      midias: z.array(z.object({ url: z.string().url(), tipo: z.enum(["imagem", "video"]) })).min(1).max(10).optional(),
+      midias: z.array(z.object({
+        url: z.string().url(),
+        tipo: z.enum(["imagem", "video"]),
+        produtos: produtos.optional().describe("Só Instagram (post, carrossel e Reels; Stories não): produtos do catálogo marcados nesta mídia. Ache o product_id com meta_produtos."),
+      })).min(1).max(10).optional(),
       legenda: z.string().max(2200).optional().describe("Até 2.200 caracteres e 30 hashtags no Instagram."),
       redes: z.array(rede).min(1).optional(),
       horario: z.string().optional().describe("ISO 8601 com fuso, ex.: 2026-10-05T19:00:00-03:00 (Brasília). Omita para publicar agora."),
@@ -183,6 +193,56 @@ export function buildServer(env: Env) {
         : "agora, na confirmação";
       return prepare(env, "meta_publicar", `${formato} em ${redes.join(" e ")}, ${quandoTexto}`, { pub, quando }, {
         formato, redes, quando: quandoTexto, legenda: pub.legenda, midias, alt_text: pub.alt_text, avisos,
+      });
+    });
+
+  // ---------- Marcação de produtos (Instagram Shopping) ----------
+
+  tool(server, "meta_produtos",
+    "Busca produtos no catálogo da Meta (sincronizado com o site Tray) para marcar no Instagram: devolve o product_id a usar em meta_publicar ou meta_marcar_produtos, o retailer_id (id do produto na Tray) e se o produto pode ser marcado (review_status). Busca por nome ou pelo id da Tray.",
+    z.object({
+      busca: z.string().min(1).describe("Nome ou parte do nome do produto, ou o id da Tray."),
+      catalogo_id: z.string().default(CATALOGO),
+    }), true,
+    async ({ busca, catalogo_id }) => {
+      const c = await g.conta();
+      return g.call(`/${c.ig_id}/catalog_product_search`, { query: { catalog_id: catalogo_id, q: busca } });
+    });
+
+  tool(server, "meta_marcar_produtos",
+    "Marca produtos do catálogo num post do Instagram já publicado (foto, carrossel ou Reels; Stories não são aceitos pela API). Para carrossel, use o id de cada foto (veja children em meta_consultar /{media_id}?fields=children{id,media_type}). Também remove marcações. Primeira chamada mostra as marcações atuais e a prévia; a segunda, só com confirmacao_id, grava.",
+    z.object({
+      media_id: z.string().optional().describe("Id da mídia no Instagram (meta_posts) ou de uma foto do carrossel."),
+      marcar: produtos.optional(),
+      remover: z.array(z.string()).max(20).optional().describe("product_id das marcações a tirar."),
+      confirmacao_id: confirmacao,
+    }), false,
+    async ({ media_id, marcar, remover, confirmacao_id }) => {
+      if (confirmacao_id) {
+        const { acao } = await take<{ media_id: string; marcar?: { product_id: string; x?: number; y?: number }[]; remover?: string[]; video: boolean }>(env, "meta_marcar_produtos", confirmacao_id);
+        const resultados: Record<string, unknown> = {};
+        if (acao.marcar?.length) {
+          const updated_tags = acao.marcar.map((p) => (acao.video ? { product_id: p.product_id } : { product_id: p.product_id, x: p.x ?? 0.5, y: p.y ?? 0.5 }));
+          resultados.marcados = await g.call(`/${acao.media_id}/product_tags`, { body: { updated_tags } });
+        }
+        if (acao.remover?.length) {
+          resultados.removidos = await g.call(`/${acao.media_id}/product_tags`, {
+            method: "DELETE", body: { deleted_tags: acao.remover.map((product_id) => ({ product_id })) },
+          });
+        }
+        return { status: "GRAVADO", ...resultados, marcacoes_agora: await g.call(`/${acao.media_id}/product_tags`) };
+      }
+      if (!media_id || (!marcar?.length && !remover?.length)) throw new Error("Informe media_id e marcar e/ou remover para gerar a prévia.");
+      const [midia, atuais] = await Promise.all([
+        g.call(`/${media_id}`, { query: { fields: "id,media_type,media_product_type,permalink,caption" } }),
+        g.call(`/${media_id}/product_tags`).catch((e) => ({ erro: e instanceof Error ? e.message : String(e) })),
+      ]);
+      if (midia.media_product_type === "STORY") throw new Error("A API da Meta não marca produtos em Stories. Marque pelo app.");
+      if (midia.media_type === "CAROUSEL_ALBUM") throw new Error("Num carrossel, marque cada foto pelo id dela: meta_consultar /{media_id}?fields=children{id,media_type}.");
+      const video = midia.media_type === "VIDEO";
+      return prepare(env, "meta_marcar_produtos", `Marcar produtos no post ${midia.permalink ?? media_id}`, { media_id, marcar, remover, video }, {
+        post: midia, marcacoes_atuais: atuais, marcar, remover,
+        ...(video && marcar?.some((p) => p.x !== undefined || p.y !== undefined) ? { aviso: "Vídeo/Reels não usa posição x/y; será ignorada." } : {}),
       });
     });
 
