@@ -234,7 +234,9 @@ export function buildServer(env: Env) {
       }
       if (!media_id || (!marcar?.length && !remover?.length)) throw new Error("Informe media_id e marcar e/ou remover para gerar a prévia.");
       const [midia, atuais] = await Promise.all([
-        g.call(`/${media_id}`, { query: { fields: "id,media_type,media_product_type,permalink,caption" } }),
+        // Carousel children reject media_product_type/permalink/caption, so fall back to the basic fields.
+        g.call(`/${media_id}`, { query: { fields: "id,media_type,media_product_type,permalink,caption" } })
+          .catch(() => g.call(`/${media_id}`, { query: { fields: "id,media_type" } })),
         g.call(`/${media_id}/product_tags`).catch((e) => ({ erro: e instanceof Error ? e.message : String(e) })),
       ]);
       if (midia.media_product_type === "STORY") throw new Error("A API da Meta não marca produtos em Stories. Marque pelo app.");
